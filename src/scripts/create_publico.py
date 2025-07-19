@@ -39,7 +39,7 @@ def main() -> None:
 
     dataset = DatasetDict({"train": train, "val": val, "test": test})
 
-    dataset_id = "EuroEval/publico-mini"
+    dataset_id = "duarteocarmo/publico-mini"
 
     # Remove the dataset from Hugging Face Hub if it already exists
     try:
@@ -49,7 +49,7 @@ def main() -> None:
         pass
 
     # Push the dataset to the Hugging Face Hub
-    dataset.push_to_hub(dataset_id, private=True)
+    dataset.push_to_hub(dataset_id, private=False)
 
 
 def _extract_fields(example: dict) -> dict | None:

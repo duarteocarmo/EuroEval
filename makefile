@@ -29,7 +29,7 @@ help:
 install: ## Install dependencies
 	@echo "Installing the 'EuroEval' project..."
 	@$(MAKE) --quiet install-rust
-	@$(MAKE) --quiet install-uv
+	# @$(MAKE) --quiet install-uv
 	@$(MAKE) --quiet install-dependencies
 	@$(MAKE) --quiet setup-environment-variables
 	@$(MAKE) --quiet install-pre-commit

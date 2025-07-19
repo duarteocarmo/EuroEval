@@ -19,7 +19,7 @@ from requests import HTTPError
 RANDOM_STATE = 4242
 TRAIN_SIZE, VAL_SIZE, TEST_SIZE = 1024, 256, 2048
 ORIGINAL_REPO_ID = "PORTULAN/extraglue"
-FINAL_REPO_ID = "EuroEval/sst2-pt-mini"
+FINAL_REPO_ID = "duarteocarmo/sst2-pt-mini"
 
 
 def main() -> None:
@@ -46,7 +46,7 @@ def main() -> None:
     except HTTPError:
         pass
 
-    dataset.push_to_hub(FINAL_REPO_ID, private=True)
+    dataset.push_to_hub(FINAL_REPO_ID, private=False)
 
 
 def cleanup(df: pandas.DataFrame, n: int | None = None) -> pandas.DataFrame:

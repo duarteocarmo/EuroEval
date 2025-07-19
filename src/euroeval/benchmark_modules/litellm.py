@@ -160,6 +160,8 @@ REASONING_MODELS = [
     r"(gemini/)?gemini.*thinking.*",
     r"(gemini/)?gemini-2.5.*",
     r"(xai/)?grok-3-mini.*",
+    r"(.*/)?(deepseek/)?(deepseek-)?r1.*",
+    r".*/gemini-2.5.*",
 ]
 
 
@@ -381,15 +383,38 @@ class LiteLLMModel(BenchmarkModule):
         conversations_to_run: list[tuple[int, list[litellm.AllMessageValues]]] = list(
             enumerate(conversations)
         )
+
+        # Create router once and reuse it to avoid connection issues
+        router = Router(
+            model_list=[
+                dict(
+                    model_name=self.model_config.model_id,
+                    litellm_params=generation_kwargs,
+                )
+            ]
+        )
+
         for attempt in range(num_attempts := 10):
             if not conversations_to_run:
                 break
 
             batch_indices, batch_conversations = zip(*conversations_to_run)
+
+            # Ollama-specific concurrency limiting - be much more conservative on retries
+            if self.is_ollama:
+                if attempt == 0:
+                    max_concurrent_calls = 2  # Start with lower concurrency for Ollama
+                else:
+                    max_concurrent_calls = 1  # Force sequential processing on retries
+            else:
+                max_concurrent_calls = 4 if attempt == 0 else max(1, 5 // (attempt + 1))
+
             successes, failures = safe_run(
                 self._generate_async(
                     model_id=self.model_config.model_id,
                     conversations=list(batch_conversations),
+                    max_concurrent_calls=max_concurrent_calls,
+                    router=router,
                     **generation_kwargs,
                 )
             )
@@ -414,13 +439,47 @@ class LiteLLMModel(BenchmarkModule):
                 f"{len(conversations_to_run):,} failed message(s)"
             )
 
+            # Check for Ollama process crashes and give longer recovery time
+            ollama_process_crashed = any(
+                isinstance(error, APIConnectionError)
+                and "llama runner process no longer running" in str(error).lower()
+                for _, error in failures
+            )
+
+            if ollama_process_crashed:
+                recovery_delay = 15 + (
+                    attempt * 5
+                )  # Longer delay for Ollama process recovery
+                logger.debug(
+                    f"Detected Ollama process crash. Waiting {recovery_delay} seconds for recovery..."
+                )
+                sleep(recovery_delay)
+            else:
+                # Implement distributed retry with exponential backoff and staggered delays
+                base_delay = 5 + (attempt * 2)  # Increase base delay with each attempt
+                if len(conversations_to_run) > 1:
+                    # For multiple failed requests, distribute them over time to reduce server load
+                    stagger_delay = min(
+                        len(conversations_to_run) * 0.5, 10
+                    )  # Cap at 10 seconds
+                    total_retry_delay = base_delay + stagger_delay
+                    logger.debug(
+                        f"Distributing {len(conversations_to_run)} failed requests over "
+                        f"{total_retry_delay:.1f} seconds to prevent server overload"
+                    )
+                    sleep(total_retry_delay)
+                else:
+                    sleep(base_delay)
+
             # Attempt to handle the exceptions, to improve the chance of getting
             # successful generations next time around
             for _, error in failures:
                 self._handle_exception(error=error, generation_kwargs=generation_kwargs)
 
-            # Sleep for a second to avoid pinging the API server too quickly
-            sleep(1)
+            # Additional small delay to avoid rapid successive requests
+            # Longer delay for Ollama to prevent overwhelming the process
+            additional_delay = 3 if self.is_ollama else 1
+            sleep(additional_delay)
         else:
             raise InvalidBenchmark(
                 message=f"Failed to generate text, after {num_attempts:,} attempts."
@@ -575,6 +634,13 @@ class LiteLLMModel(BenchmarkModule):
                     "value by running `ulimit -n`. Try increasing it by running "
                     "`ulimit -n <new-value>` and try again."
                 )
+            # Handle Ollama-specific connection errors more gracefully
+            if self.is_ollama and "llama runner process no longer running" in error_msg:
+                logger.debug(
+                    f"Ollama process crashed for model {model_id!r}. This will be retried "
+                    "with longer recovery delays."
+                )
+                return  # Allow retry with special handling
             raise InvalidBenchmark(
                 f"Encountered {type(error)} during generation: {error}."
             )
@@ -600,6 +666,8 @@ class LiteLLMModel(BenchmarkModule):
         self,
         model_id: str,
         conversations: list[list[litellm.AllMessageValues]],
+        max_concurrent_calls: int = 5,
+        router: Router | None = None,
         **generation_kwargs,
     ) -> tuple[list[tuple[int, "ModelResponse"]], list[tuple[int, Exception]]]:
         """Generate outputs from the model asynchronously.
@@ -609,6 +677,10 @@ class LiteLLMModel(BenchmarkModule):
                 The ID of the model to use for generation.
             conversations:
                 The conversations to pass to the model.
+            max_concurrent_calls:
+                Maximum number of concurrent API calls.
+            router:
+                Optional pre-created LiteLLM router. If None, a new one will be created.
             **generation_kwargs:
                 Additional generation arguments to pass to the model.
 
@@ -617,45 +689,59 @@ class LiteLLMModel(BenchmarkModule):
             where the `idx` corresponds to the index of `conversations`, and `content`
             is either the model response or an Exception.
         """
-        # Create a LiteLLM router, which will ensure that we only use a single client
-        # for all the requests, preventing "too many open files" errors
-        router = Router(
-            model_list=[
-                dict(
-                    model_name=self.model_config.model_id,
-                    litellm_params=generation_kwargs,
-                )
-            ]
-        )
+        # Use provided router or create a new one if none provided
+        if router is None:
+            router = Router(
+                model_list=[
+                    dict(
+                        model_name=self.model_config.model_id,
+                        litellm_params=generation_kwargs,
+                    )
+                ]
+            )
 
-        # Get the LLM generations asynchronously
-        max_concurrent_calls = 20
+        # Get the LLM generations asynchronously with staggered start times for retries
         semaphore = asyncio.Semaphore(max_concurrent_calls)
-        requests = [
-            add_semaphore_and_catch_exception(
+
+        async def staggered_request(
+            idx: int, conversation: list[litellm.AllMessageValues]
+        ) -> tuple[int, t.Any]:
+            """Make a request with optional staggering for server load distribution."""
+            # Add delay for request distribution, more conservative for Ollama
+            if len(conversations) > 1 and idx > 0:
+                if self.is_ollama:
+                    # More aggressive staggering for Ollama to prevent overload
+                    stagger_delay = idx * 0.5  # 500ms per request
+                else:
+                    # Original logic for other models
+                    stagger_delay = (idx % 4) * 0.2  # Stagger by 200ms intervals
+                await asyncio.sleep(stagger_delay)
+
+            response = await add_semaphore_and_catch_exception(
                 router.acompletion(model=model_id, messages=conversation),
                 semaphore=semaphore,
             )
-            for conversation in conversations
+            return idx, response
+
+        # Create staggered requests
+        request_tasks = [
+            staggered_request(idx, conversation)
+            for idx, conversation in enumerate(conversations)
         ]
-        responses = await tqdm_async.gather(*requests, leave=False)
+
+        responses = await tqdm_async.gather(*request_tasks, leave=False)
 
         # Separate the successful responses from the failed ones
         successes = [
             (idx, response)
-            for idx, response in enumerate(responses)
+            for idx, response in responses
             if not isinstance(response, Exception)
         ]
         failures = [
             (idx, response)
-            for idx, response in enumerate(responses)
+            for idx, response in responses
             if isinstance(response, Exception)
         ]
-
-        # Close connections
-        for request in requests:
-            if hasattr(request, "close"):
-                request.close()
 
         return successes, failures
 

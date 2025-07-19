@@ -62,7 +62,7 @@ def main() -> None:
         test=Dataset.from_pandas(test_df, split=Split.TEST),
     )
 
-    dataset_id = "EuroEval/goldenswag-pt-mini"
+    dataset_id = "duarteocarmo/goldenswag-pt-mini"
 
     # Remove the dataset from Hugging Face Hub if it already exists
     try:
@@ -72,7 +72,7 @@ def main() -> None:
         pass
 
     # Push the dataset to the Hugging Face Hub
-    dataset.push_to_hub(dataset_id, private=True)
+    dataset.push_to_hub(dataset_id, private=False)
 
 
 def process_(dataset: Dataset) -> pd.DataFrame:

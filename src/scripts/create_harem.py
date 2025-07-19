@@ -152,7 +152,7 @@ def main() -> None:
     )
 
     # Create dataset ID
-    dataset_id = "EuroEval/harem"
+    dataset_id = "duarteocarmo/harem"
 
     # Remove the dataset from Hugging Face Hub if it already exists
     try:
@@ -163,7 +163,7 @@ def main() -> None:
 
     # Push the dataset to the Hugging Face Hub
     logger.info(f"\nUploading dataset to {dataset_id}...")
-    dataset.push_to_hub(dataset_id, private=True)
+    dataset.push_to_hub(dataset_id, private=False)
     logger.info("Dataset uploaded successfully!")
 
 

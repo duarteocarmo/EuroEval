@@ -36,17 +36,17 @@ def main() -> None:
 
     # Create a mapping with the word "Choices" in different languages
     choices_mapping = {
-        "da": "Svarmuligheder",
-        "no": "Svaralternativer",
-        "sv": "Svarsalternativ",
-        "is": "Svarmöguleikar",
-        "de": "Antwortmöglichkeiten",
-        "nl": "Antwoordopties",
-        "en": "Choices",
-        "fr": "Choix",
-        "it": "Scelte",
-        "es": "Opciones",
-        "pt": "Opções",
+        # "da": "Svarmuligheder",
+        # "no": "Svaralternativer",
+        # "sv": "Svarsalternativ",
+        # "is": "Svarmöguleikar",
+        # "de": "Antwortmöglichkeiten",
+        # "nl": "Antwoordopties",
+        # "en": "Choices",
+        # "fr": "Choix",
+        # "it": "Scelte",
+        # "es": "Opciones",
+        "pt": "Opções"
     }
 
     for language in choices_mapping.keys():
@@ -167,7 +167,7 @@ def main() -> None:
         if language == "en":
             dataset_id = "EuroEval/mmlu-mini"
         else:
-            dataset_id = f"EuroEval/mmlu-{language}-mini"
+            dataset_id = f"duarteocarmo/mmlu-{language}-mini"
 
         # Remove the dataset from Hugging Face Hub if it already exists
         try:
@@ -177,7 +177,7 @@ def main() -> None:
             pass
 
         # Push the dataset to the Hugging Face Hub
-        dataset.push_to_hub(dataset_id, private=True)
+        dataset.push_to_hub(dataset_id, private=False)
 
 
 def load_pt_dataset() -> DatasetDict:

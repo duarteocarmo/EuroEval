@@ -18,7 +18,7 @@ from requests import HTTPError
 RANDOM_STATE = 4242
 TRAIN_SIZE, VAL_SIZE, TEST_SIZE = 1024, 256, 2048
 ORIGINAL_REPO_ID = "PORTULAN/extraglue"
-FINAL_REPO_ID = "EuroEval/boolq-pt"
+FINAL_REPO_ID = "duarteocarmo/boolq-pt"
 
 
 def main() -> None:
@@ -76,7 +76,7 @@ def main() -> None:
     except HTTPError:
         pass
 
-    dataset.push_to_hub(FINAL_REPO_ID, private=True)
+    dataset.push_to_hub(FINAL_REPO_ID, private=False)
 
 
 def transform_dataset(df: pandas.DataFrame) -> pandas.DataFrame:
